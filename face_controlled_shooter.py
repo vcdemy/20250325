@@ -6,6 +6,8 @@ from pygame import mixer
 from collections import deque
 import mediapipe as mp
 import random
+import sys
+import time
 
 # 初始化 Pygame
 pygame.init()
@@ -29,12 +31,13 @@ YELLOW = (255, 255, 0)
 try:
     shoot_sound = mixer.Sound("shoot.wav")
     explosion_sound = mixer.Sound("explosion.wav")
-except:
-    print("Warning: Sound files not found. Creating dummy sounds.")
+except Exception as e:
+    print(f"Warning: Sound files not found or error loading sounds: {e}")
     shoot_sound = mixer.Sound(buffer=b'')
     explosion_sound = mixer.Sound(buffer=b'')
 
 # 初始化 MediaPipe Face Mesh
+print("正在初始化 MediaPipe Face Mesh...")
 mp_face_mesh = mp.solutions.face_mesh
 face_mesh = mp_face_mesh.FaceMesh(
     max_num_faces=1,
@@ -123,11 +126,46 @@ class Bullet(pygame.sprite.Sprite):
             self.rect.right < 0 or self.rect.left > WINDOW_WIDTH):
             self.kill()
 
-def cv2_frame_to_pygame_surface(frame):
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    frame = np.rot90(frame)
-    frame = pygame.surfarray.make_surface(frame)
-    return frame
+# 初始化攝影機
+def init_camera():
+    print("正在初始化攝影機...")
+    for i in range(2):  # 嘗試前兩個攝影機設備
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            print(f"成功開啟攝影機 {i}")
+            # 設定攝影機解析度
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            
+            # 檢查攝影機設定是否成功
+            actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            print(f"攝影機解析度設定為: {actual_width}x{actual_height}")
+            
+            # 測試讀取一幀
+            ret, frame = cap.read()
+            if ret:
+                print("攝影機測試讀取成功")
+                return cap
+            else:
+                print(f"攝影機 {i} 無法讀取畫面")
+                cap.release()
+        else:
+            print(f"無法開啟攝影機 {i}")
+    
+    print("錯誤：無法找到可用的攝影機")
+    return None
+
+cap = init_camera()
+if cap is None:
+    print("無法初始化攝影機，程式即將退出")
+    pygame.quit()
+    sys.exit(1)
+
+# 移動平均值追蹤器
+face_x_avg = MovingAverage(size=5)
+eye_direction_x_avg = MovingAverage(size=3)
+eye_direction_y_avg = MovingAverage(size=3)
 
 # 創建精靈群組
 all_sprites = pygame.sprite.Group()
@@ -142,16 +180,6 @@ for i in range(5):
     all_sprites.add(enemy)
     enemies.add(enemy)
 
-# 初始化攝影機
-cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-# 移動平均值追蹤器
-face_x_avg = MovingAverage(size=5)
-eye_direction_x_avg = MovingAverage(size=3)
-eye_direction_y_avg = MovingAverage(size=3)
-
 # 遊戲主迴圈
 clock = pygame.time.Clock()
 running = True
@@ -159,8 +187,33 @@ last_shot_time = 0
 shot_delay = 200  # 射擊延遲（毫秒）
 debug_info = []  # 用於顯示除錯資訊
 score = 0
+frame_count = 0
+last_frame_time = time.time()
+fps_update_interval = 1.0  # 每秒更新一次 FPS
+fps = 0
+
+def process_face_mesh(frame):
+    # 轉換為 RGB
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    
+    # MediaPipe 處理
+    results = face_mesh.process(rgb_frame)
+    
+    if not results.multi_face_landmarks:
+        return None
+    
+    return results.multi_face_landmarks[0]
 
 while running:
+    current_time = time.time()
+    frame_count += 1
+    
+    # 計算並更新 FPS
+    if current_time - last_frame_time >= fps_update_interval:
+        fps = frame_count / (current_time - last_frame_time)
+        frame_count = 0
+        last_frame_time = current_time
+    
     # 事件處理
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -172,21 +225,20 @@ while running:
     # 讀取攝影機畫面
     ret, frame = cap.read()
     if not ret:
+        print("錯誤：無法讀取攝影機畫面")
         continue
 
     # 翻轉畫面（鏡像）
-    frame = cv2.flip(frame, 1)  # 1 表示水平翻轉
+    frame = cv2.flip(frame, 1)
     debug_frame = frame.copy()
     
-    # 轉換為 RGB
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    
-    # MediaPipe 處理
-    results = face_mesh.process(rgb_frame)
+    # 處理臉部特徵
+    face_landmarks = process_face_mesh(frame)
     debug_info = []  # 清空除錯資訊
+    debug_info.append(f"FPS: {fps:.1f}")
     
-    if results.multi_face_landmarks:
-        face_landmarks = results.multi_face_landmarks[0]
+    if face_landmarks:
+        debug_info.append("偵測到臉部")
         
         # 獲取臉部中心點（用於控制飛機位置）
         nose_tip = face_landmarks.landmark[4]
@@ -202,8 +254,8 @@ while running:
         cv2.circle(debug_frame, (nose_px, nose_py), 5, (255, 0, 0), -1)
         
         # 獲取眼睛位置（用於控制射擊方向）
-        left_eye = face_landmarks.landmark[468]  # 左眼中心
-        right_eye = face_landmarks.landmark[473]  # 右眼中心
+        left_eye = face_landmarks.landmark[468]
+        right_eye = face_landmarks.landmark[473]
         
         # 在除錯影像上標記眼睛位置
         left_eye_px = int(left_eye.x * frame.shape[1])
@@ -231,16 +283,13 @@ while running:
         if avg_dx is not None and avg_dy is not None:
             # 計算角度（注意：y軸方向需要反轉）
             angle = math.atan2(-avg_dy, avg_dx)
-            # 將角度轉換為度數，90度為向上
             angle_degrees = math.degrees(angle)
             
-            # 根據角度計算射擊方向
-            # 90度為向上，大於90度向左傾斜，小於90度向右傾斜
             # 限制角度在45-135度之間
             angle_degrees = max(45, min(135, angle_degrees))
             angle_radians = math.radians(angle_degrees)
             
-            # 計算射擊方向（修正方向計算）
+            # 計算射擊方向
             player.shooting_direction = [-math.sin(angle_radians), -math.cos(angle_radians)]
             
             # 在除錯影像上畫出射擊方向
@@ -262,6 +311,8 @@ while running:
             # 添加除錯資訊
             debug_info.append(f"Angle: {angle_degrees:.1f}°")
             debug_info.append(f"Direction: ({player.shooting_direction[0]:.2f}, {player.shooting_direction[1]:.2f})")
+    else:
+        debug_info.append("未偵測到臉部")
     
     # 更新所有精靈
     all_sprites.update()
@@ -271,7 +322,6 @@ while running:
     for hit in hits:
         score += 1
         explosion_sound.play()
-        # 創建新的敵機
         enemy = Enemy()
         all_sprites.add(enemy)
         enemies.add(enemy)
@@ -280,10 +330,15 @@ while running:
     screen.fill(BLACK)
     
     # 繪製半透明的攝影機畫面
-    debug_surface = cv2_frame_to_pygame_surface(debug_frame)
-    debug_surface = pygame.transform.scale(debug_surface, (WINDOW_WIDTH, WINDOW_HEIGHT))
-    debug_surface.set_alpha(128)
-    screen.blit(debug_surface, (0, 0))
+    try:
+        debug_surface = cv2.cvtColor(debug_frame, cv2.COLOR_BGR2RGB)
+        debug_surface = np.rot90(debug_surface)
+        debug_surface = pygame.surfarray.make_surface(debug_surface)
+        debug_surface = pygame.transform.scale(debug_surface, (WINDOW_WIDTH, WINDOW_HEIGHT))
+        debug_surface.set_alpha(128)
+        screen.blit(debug_surface, (0, 0))
+    except Exception as e:
+        print(f"錯誤：無法繪製攝影機畫面: {e}")
     
     # 繪製遊戲精靈
     all_sprites.draw(screen)
@@ -303,5 +358,6 @@ while running:
     clock.tick(60)
 
 # 清理資源
+print("正在關閉攝影機...")
 cap.release()
 pygame.quit() 
