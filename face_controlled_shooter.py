@@ -72,7 +72,7 @@ class Player(pygame.sprite.Sprite):
         self.rect.centerx = WINDOW_WIDTH // 2
         self.rect.bottom = WINDOW_HEIGHT - 10
         self.speed = 5
-        self.shooting_direction = [0, -1]
+        self.shooting_direction = [0, -1]  # 預設向上射擊
         self.angle = 0
         self.target_x = self.rect.centerx
         self.smoothing = 0.2  # 平滑係數 (0-1)
@@ -229,7 +229,7 @@ while running:
         continue
 
     # 翻轉畫面（鏡像）
-    frame = cv2.flip(frame, 1)  # 1 表示水平翻轉
+    # frame = cv2.flip(frame, 1)  # 1 表示水平翻轉
     debug_frame = frame.copy()
     
     # 處理臉部特徵
@@ -269,10 +269,19 @@ while running:
         # 計算眼睛中心點
         eye_center_x = (left_eye.x + right_eye.x) / 2
         eye_center_y = (left_eye.y + right_eye.y) / 2
+
+        eye_center_px = int(eye_center_x * frame.shape[1])
+        eye_center_py = int(eye_center_y * frame.shape[0])
+
+        cv2.circle(debug_frame, (eye_center_px, eye_center_py), 3, (0, 255, 0), -1)
+        
         
         # 計算射擊方向（相對於臉部中心）
-        dx = eye_center_x - nose_tip.x
-        dy = eye_center_y - nose_tip.y
+        # dx = eye_center_x - nose_tip.x
+        # dy = eye_center_y - nose_tip.y
+        dx = left_eye.x - right_eye.x
+        dy = left_eye.y - right_eye.y
+
         
         # 平滑化方向
         eye_direction_x_avg.add(dx)
@@ -283,22 +292,24 @@ while running:
         
         if avg_dx is not None and avg_dy is not None:
             # 計算角度（注意：y軸方向需要反轉）
-            angle = math.atan2(-avg_dy, avg_dx)
+            # angle = math.atan2(-avg_dy, avg_dx)
+            angle = math.atan2(avg_dy, -avg_dx)
             angle_degrees = math.degrees(angle)
+            print(f"{avg_dx:.2f}, {avg_dy:.2f}, {angle_degrees:.2f}")
             
-            # 限制角度在45-135度之間
-            angle_degrees = max(45, min(135, angle_degrees))
+            # 限制角度在 -45 到 45 度之間（相對於垂直向上）
+            angle_degrees = max(-45, min(45, angle_degrees))
             angle_radians = math.radians(angle_degrees)
             
-            # 計算射擊方向
-            player.shooting_direction = [-math.sin(angle_radians), -math.cos(angle_radians)]
+            # 計算射擊方向（基於垂直向上的方向）
+            player.shooting_direction = [math.sin(angle_radians), -math.cos(angle_radians)]
             
             # 在除錯影像上畫出射擊方向
             direction_end = (
-                int(nose_px + player.shooting_direction[0] * 50),
-                int(nose_py + player.shooting_direction[1] * 50)
+                int(eye_center_px - player.shooting_direction[0] * 50),
+                int(eye_center_py + player.shooting_direction[1] * 50)
             )
-            cv2.line(debug_frame, (nose_px, nose_py), direction_end, (0, 255, 255), 2)
+            cv2.line(debug_frame, (eye_center_px, eye_center_py), direction_end, (0, 255, 255), 2)
             
             # 自動射擊
             current_time = pygame.time.get_ticks()
