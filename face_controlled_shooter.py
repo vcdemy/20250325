@@ -229,7 +229,7 @@ while running:
         continue
 
     # 翻轉畫面（鏡像）
-    frame = cv2.flip(frame, 1)
+    frame = cv2.flip(frame, 1)  # 1 表示水平翻轉
     debug_frame = frame.copy()
     
     # 處理臉部特徵
@@ -242,7 +242,8 @@ while running:
         
         # 獲取臉部中心點（用於控制飛機位置）
         nose_tip = face_landmarks.landmark[4]
-        x_pos = int(nose_tip.x * WINDOW_WIDTH)
+        # 由於畫面已經翻轉，需要調整 x 座標的計算
+        x_pos = int((1 - nose_tip.x) * WINDOW_WIDTH)  # 反轉 x 座標
         face_x_avg.add(x_pos)
         avg_x = face_x_avg.get_average()
         if avg_x is not None:
