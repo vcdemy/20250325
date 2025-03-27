@@ -238,7 +238,7 @@ while running:
     debug_info.append(f"FPS: {fps:.1f}")
     
     if face_landmarks:
-        debug_info.append("偵測到臉部")
+        debug_info.append("Face detected")
         
         # 獲取臉部中心點（用於控制飛機位置）
         nose_tip = face_landmarks.landmark[4]
@@ -324,7 +324,7 @@ while running:
             debug_info.append(f"Angle: {angle_degrees:.1f}°")
             debug_info.append(f"Direction: ({player.shooting_direction[0]:.2f}, {player.shooting_direction[1]:.2f})")
     else:
-        debug_info.append("未偵測到臉部")
+        debug_info.append("No face detected")
     
     # 更新所有精靈
     all_sprites.update()
